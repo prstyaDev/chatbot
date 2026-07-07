@@ -24,7 +24,6 @@ import type { Vote } from "@/lib/db/schema";
 import { ChatbotError } from "@/lib/errors";
 import type { Attachment, ChatMessage } from "@/lib/types";
 import { fetcher, fetchWithErrorHandlers, generateUUID } from "@/lib/utils";
-import { getAuthorizationHeader } from "@/lib/auth-token";
 import { Artifact } from "./artifact";
 import { useDataStream } from "./data-stream-provider";
 import { Messages } from "./messages";
@@ -128,11 +127,6 @@ export function Chat({
             selectedChatModel: currentModelIdRef.current,
             selectedVisibilityType: visibilityType,
             ...request.body,
-          },
-          // Inject Authorization header dengan JWT token
-          // Token diambil dari localStorage, atau fallback ke testing token
-          headers: {
-            'Authorization': getAuthorizationHeader(),
           },
         };
       },
