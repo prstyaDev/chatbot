@@ -1,314 +1,146 @@
-import { checkBotId } from "botid/server";
-import { geolocation, ipAddress } from "@vercel/functions";
-import {
-  convertToModelMessages,
-  createUIMessageStream,
-  createUIMessageStreamResponse,
-  generateId,
-  stepCountIs,
-  streamText,
-} from "ai";
-import { after } from "next/server";
-import { createResumableStreamContext } from "resumable-stream";
-import { auth, type UserType } from "@/app/(auth)/auth";
-import { entitlementsByUserType } from "@/lib/ai/entitlements";
-import { type RequestHints, systemPrompt } from "@/lib/ai/prompts";
-import { allowedModelIds } from "@/lib/ai/models";
-import { getLanguageModel } from "@/lib/ai/providers";
-import { createDocument } from "@/lib/ai/tools/create-document";
-import { getWeather } from "@/lib/ai/tools/get-weather";
-import { requestSuggestions } from "@/lib/ai/tools/request-suggestions";
-import { updateDocument } from "@/lib/ai/tools/update-document";
-import { isProductionEnvironment } from "@/lib/constants";
-import {
-  createStreamId,
-  deleteChatById,
-  getChatById,
-  getMessageCountByUserId,
-  getMessagesByChatId,
-  saveChat,
-  saveMessages,
-  updateChatTitleById,
-  updateMessage,
-} from "@/lib/db/queries";
-import type { DBMessage } from "@/lib/db/schema";
-import { ChatbotError } from "@/lib/errors";
-import { checkIpRateLimit } from "@/lib/ratelimit";
-import type { ChatMessage } from "@/lib/types";
-import { convertToUIMessages, generateUUID } from "@/lib/utils";
-import { generateTitleFromUserMessage } from "../../actions";
-import { type PostRequestBody, postRequestBodySchema } from "./schema";
+/**
+ * Chat API Proxy Route
+ * 
+ * Route ini berfungsi sebagai proxy murni ke backend API eksternal.
+ * Semua request diteruskan ke backend dengan header Authorization dan body asli,
+ * kemudian response streaming dari backend diteruskan kembali ke client.
+ * 
+ * Backend menangani semua logika:
+ * - Autentikasi dan autorisasi via JWT token
+ * - Rate limiting dan validasi
+ * - Penyimpanan chat history ke database (Supabase)
+ * - Generasi response dari LLM
+ * 
+ * Required Environment Variables:
+ * - BACKEND_API_URL: Endpoint backend eksternal (e.g., http://localhost:3000/api/chat)
+ * 
+ * @example
+ * // Local development
+ * BACKEND_API_URL=http://localhost:3000/api/chat
+ * 
+ * // Production
+ * BACKEND_API_URL=https://api.yourdomain.com/api/chat
+ */
 
+// Timeout maksimal untuk streaming requests (60 detik)
 export const maxDuration = 60;
 
-function getStreamContext() {
-  try {
-    return createResumableStreamContext({ waitUntil: after });
-  } catch (_) {
-    return null;
-  }
-}
-
-export { getStreamContext };
-
+/**
+ * POST /api/chat
+ * 
+ * Meneruskan chat request ke backend eksternal dan streaming response kembali ke client.
+ * 
+ * Headers yang diteruskan:
+ * - Authorization: JWT token untuk autentikasi
+ * - Content-Type: application/json
+ * 
+ * Response headers yang diteruskan dari backend:
+ * - Content-Type: format response (biasanya text/event-stream untuk DataStream)
+ * - Content-Encoding: encoding jika ada
+ * - Transfer-Encoding: chunked untuk streaming
+ * - Cache-Control: caching policy
+ */
 export async function POST(request: Request) {
-  let requestBody: PostRequestBody;
-
   try {
-    const json = await request.json();
-    requestBody = postRequestBodySchema.parse(json);
-  } catch (_) {
-    return new ChatbotError("bad_request:api").toResponse();
-  }
-
-  try {
-    const { id, message, messages, selectedChatModel, selectedVisibilityType } =
-      requestBody;
-
-    const [botResult, session] = await Promise.all([checkBotId(), auth()]);
-
-    if (botResult.isBot) {
-      return new ChatbotError("unauthorized:chat").toResponse();
+    // 1. Validasi konfigurasi backend URL
+    const backendUrl = process.env.BACKEND_API_URL;
+    
+    if (!backendUrl) {
+      return new Response(
+        JSON.stringify({
+          error: 'Backend API URL not configured',
+          message: 'BACKEND_API_URL environment variable is required',
+        }),
+        {
+          status: 500,
+          headers: { 'Content-Type': 'application/json' },
+        }
+      );
     }
 
-    if (!session?.user) {
-      return new ChatbotError("unauthorized:chat").toResponse();
+    // 2. Ekstrak Authorization header dari request
+    const authorization = request.headers.get('Authorization');
+    
+    if (!authorization) {
+      return new Response(
+        JSON.stringify({
+          error: 'Unauthorized',
+          message: 'Authorization header is required',
+        }),
+        {
+          status: 401,
+          headers: { 'Content-Type': 'application/json' },
+        }
+      );
     }
 
-    if (!allowedModelIds.has(selectedChatModel)) {
-      return new ChatbotError("bad_request:api").toResponse();
+    // 3. Parse request body
+    let body: string;
+    try {
+      const json = await request.json();
+      body = JSON.stringify(json);
+    } catch (error) {
+      return new Response(
+        JSON.stringify({
+          error: 'Bad Request',
+          message: 'Invalid JSON body',
+        }),
+        {
+          status: 400,
+          headers: { 'Content-Type': 'application/json' },
+        }
+      );
     }
 
-    await checkIpRateLimit(ipAddress(request));
-
-    const userType: UserType = session.user.type;
-
-    const messageCount = await getMessageCountByUserId({
-      id: session.user.id,
-      differenceInHours: 24,
+    // 4. Forward request ke backend dengan Authorization header
+    const backendResponse = await fetch(backendUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': authorization,
+      },
+      body,
     });
 
-    if (messageCount > entitlementsByUserType[userType].maxMessagesPerDay) {
-      return new ChatbotError("rate_limit:chat").toResponse();
-    }
-
-    const isToolApprovalFlow = Boolean(messages);
-
-    const chat = await getChatById({ id });
-    let messagesFromDb: DBMessage[] = [];
-    let titlePromise: Promise<string> | null = null;
-
-    if (chat) {
-      if (chat.userId !== session.user.id) {
-        return new ChatbotError("forbidden:chat").toResponse();
+    // 5. Forward selective response headers dari backend ke client
+    const responseHeaders = new Headers();
+    
+    // Headers penting untuk streaming dan caching
+    const headersToForward = [
+      'Content-Type',
+      'Content-Encoding',
+      'Transfer-Encoding',
+      'Cache-Control',
+    ];
+    
+    for (const headerName of headersToForward) {
+      const headerValue = backendResponse.headers.get(headerName);
+      if (headerValue) {
+        responseHeaders.set(headerName, headerValue);
       }
-      if (!isToolApprovalFlow) {
-        messagesFromDb = await getMessagesByChatId({ id });
-      }
-    } else if (message?.role === "user") {
-      await saveChat({
-        id,
-        userId: session.user.id,
-        title: "New chat",
-        visibility: selectedVisibilityType,
-      });
-      titlePromise = generateTitleFromUserMessage({ message });
     }
 
-    const uiMessages = isToolApprovalFlow
-      ? (messages as ChatMessage[])
-      : [...convertToUIMessages(messagesFromDb), message as ChatMessage];
-
-    const { longitude, latitude, city, country } = geolocation(request);
-
-    const requestHints: RequestHints = {
-      longitude,
-      latitude,
-      city,
-      country,
-    };
-
-    if (message?.role === "user") {
-      await saveMessages({
-        messages: [
-          {
-            chatId: id,
-            id: message.id,
-            role: "user",
-            parts: message.parts,
-            attachments: [],
-            createdAt: new Date(),
-          },
-        ],
-      });
-    }
-
-    const isReasoningModel =
-      selectedChatModel.endsWith("-thinking") ||
-      (selectedChatModel.includes("reasoning") &&
-        !selectedChatModel.includes("non-reasoning"));
-
-    const modelMessages = await convertToModelMessages(uiMessages);
-
-    const stream = createUIMessageStream({
-      originalMessages: isToolApprovalFlow ? uiMessages : undefined,
-      execute: async ({ writer: dataStream }) => {
-        const result = streamText({
-          model: getLanguageModel(selectedChatModel),
-          system: systemPrompt({ selectedChatModel, requestHints }),
-          messages: modelMessages,
-          stopWhen: stepCountIs(5),
-          experimental_activeTools: isReasoningModel
-            ? []
-            : [
-                "getWeather",
-                "createDocument",
-                "updateDocument",
-                "requestSuggestions",
-              ],
-          providerOptions: isReasoningModel
-            ? {
-                anthropic: {
-                  thinking: { type: "enabled", budgetTokens: 10_000 },
-                },
-              }
-            : undefined,
-          tools: {
-            getWeather,
-            createDocument: createDocument({ session, dataStream }),
-            updateDocument: updateDocument({ session, dataStream }),
-            requestSuggestions: requestSuggestions({ session, dataStream }),
-          },
-          experimental_telemetry: {
-            isEnabled: isProductionEnvironment,
-            functionId: "stream-text",
-          },
-        });
-
-        dataStream.merge(
-          result.toUIMessageStream({ sendReasoning: isReasoningModel }),
-        );
-
-        if (titlePromise) {
-          const title = await titlePromise;
-          dataStream.write({ type: "data-chat-title", data: title });
-          updateChatTitleById({ chatId: id, title });
-        }
-      },
-      generateId: generateUUID,
-      onFinish: async ({ messages: finishedMessages }) => {
-        if (isToolApprovalFlow) {
-          for (const finishedMsg of finishedMessages) {
-            const existingMsg = uiMessages.find((m) => m.id === finishedMsg.id);
-            if (existingMsg) {
-              await updateMessage({
-                id: finishedMsg.id,
-                parts: finishedMsg.parts,
-              });
-            } else {
-              await saveMessages({
-                messages: [
-                  {
-                    id: finishedMsg.id,
-                    role: finishedMsg.role,
-                    parts: finishedMsg.parts,
-                    createdAt: new Date(),
-                    attachments: [],
-                    chatId: id,
-                  },
-                ],
-              });
-            }
-          }
-        } else if (finishedMessages.length > 0) {
-          await saveMessages({
-            messages: finishedMessages.map((currentMessage) => ({
-              id: currentMessage.id,
-              role: currentMessage.role,
-              parts: currentMessage.parts,
-              createdAt: new Date(),
-              attachments: [],
-              chatId: id,
-            })),
-          });
-        }
-      },
-      onError: (error) => {
-        if (
-          error instanceof Error &&
-          error.message?.includes(
-            "AI Gateway requires a valid credit card on file to service requests",
-          )
-        ) {
-          return "AI Gateway requires a valid credit card on file to service requests. Please visit https://vercel.com/d?to=%2F%5Bteam%5D%2F%7E%2Fai%3Fmodal%3Dadd-credit-card to add a card and unlock your free credits.";
-        }
-        return "Oops, an error occurred!";
-      },
+    // 6. Stream response body dari backend ke client
+    // Pass-through status code dan body apa adanya (termasuk error responses)
+    return new Response(backendResponse.body, {
+      status: backendResponse.status,
+      statusText: backendResponse.statusText,
+      headers: responseHeaders,
     });
 
-    return createUIMessageStreamResponse({
-      stream,
-      async consumeSseStream({ stream: sseStream }) {
-        if (!process.env.REDIS_URL) {
-          return;
-        }
-        try {
-          const streamContext = getStreamContext();
-          if (streamContext) {
-            const streamId = generateId();
-            await createStreamId({ streamId, chatId: id });
-            await streamContext.createNewResumableStream(
-              streamId,
-              () => sseStream
-            );
-          }
-        } catch (_) {
-          // ignore redis errors
-        }
-      },
-    });
   } catch (error) {
-    const vercelId = request.headers.get("x-vercel-id");
-
-    if (error instanceof ChatbotError) {
-      return error.toResponse();
-    }
-
-    if (
-      error instanceof Error &&
-      error.message?.includes(
-        "AI Gateway requires a valid credit card on file to service requests"
-      )
-    ) {
-      return new ChatbotError("bad_request:activate_gateway").toResponse();
-    }
-
-    console.error("Unhandled error in chat API:", error, { vercelId });
-    return new ChatbotError("offline:chat").toResponse();
+    // Handle network errors atau fetch failures
+    console.error('Proxy error:', error);
+    
+    return new Response(
+      JSON.stringify({
+        error: 'Proxy Error',
+        message: error instanceof Error ? error.message : 'Failed to connect to backend',
+      }),
+      {
+        status: 502,
+        headers: { 'Content-Type': 'application/json' },
+      }
+    );
   }
-}
-
-export async function DELETE(request: Request) {
-  const { searchParams } = new URL(request.url);
-  const id = searchParams.get("id");
-
-  if (!id) {
-    return new ChatbotError("bad_request:api").toResponse();
-  }
-
-  const session = await auth();
-
-  if (!session?.user) {
-    return new ChatbotError("unauthorized:chat").toResponse();
-  }
-
-  const chat = await getChatById({ id });
-
-  if (chat?.userId !== session.user.id) {
-    return new ChatbotError("forbidden:chat").toResponse();
-  }
-
-  const deletedChat = await deleteChatById({ id });
-
-  return Response.json(deletedChat, { status: 200 });
 }
