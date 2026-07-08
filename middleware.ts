@@ -2,7 +2,7 @@ import { type NextRequest, NextResponse } from "next/server";
 import { getToken } from "next-auth/jwt";
 import { guestRegex, isDevelopmentEnvironment } from "./lib/constants";
 
-export async function proxy(request: NextRequest) {
+export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
   /*
@@ -13,7 +13,9 @@ export async function proxy(request: NextRequest) {
     return new Response("pong", { status: 200 });
   }
 
-  if (pathname.startsWith("/api/auth")) {
+  // Skip authentication for these API endpoints
+  // /api/chat is public and handles its own auth via backend JWT
+  if (pathname.startsWith("/api/auth") || pathname.startsWith("/api/chat")) {
     return NextResponse.next();
   }
 
