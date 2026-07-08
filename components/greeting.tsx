@@ -13,7 +13,7 @@ export const Greeting = () => {
         initial={{ opacity: 0, y: 10 }}
         transition={{ delay: 0.5 }}
       >
-        Hello there!
+        Selamat datang di IHSG Analytics
       </motion.div>
       <motion.div
         animate={{ opacity: 1, y: 0 }}
@@ -22,7 +22,7 @@ export const Greeting = () => {
         initial={{ opacity: 0, y: 10 }}
         transition={{ delay: 0.6 }}
       >
-        How can I help you today?
+        Tanyakan harga saham, bandarmologi, atau analisa teknikal terkini.
       </motion.div>
     </div>
   );
