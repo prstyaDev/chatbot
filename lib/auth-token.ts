@@ -19,12 +19,14 @@ export const TOKEN_STORAGE_KEY = 'ihsg_jwt_token';
 
 /**
  * Testing token statis untuk development/testing lokal.
- * Token ini berisi payload: { userId: "user-tester-lokal", iat: 1782648569 }
+ * Token ini berisi payload: { userId: "web-user", chatId: "web-session" }
+ * Signed dengan JWT_SECRET yang sama dengan backend.
+ * Expires: 365 hari dari generation date.
  * 
  * CATATAN: Token ini hanya untuk testing. Di production, user harus login
  * untuk mendapatkan token yang valid dari backend.
  */
-export const TESTING_TOKEN = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiJ1c2VyLXRlc3Rlci1sb2thbCIsImlhdCI6MTc4MjY0ODU2OX0.your-signature-here';
+export const TESTING_TOKEN = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiJ3ZWItdXNlciIsImNoYXRJZCI6IndlYi1zZXNzaW9uIiwiaWF0IjoxNzgzNTI4MTMwLCJleHAiOjE4MTUwNjQxMzB9.C6XoJCZgdZsgqDird9Savd1ar8O6yHBxvSGGgp-7Q0U';
 
 /**
  * Mengambil JWT token dari localStorage.

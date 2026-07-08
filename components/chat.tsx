@@ -119,12 +119,18 @@ export function Chat({
             })
           );
 
+        // Extract text content from last message for backend
+        let messageText = '';
+        if (lastMessage && 'parts' in lastMessage) {
+          const textPart = lastMessage.parts?.find((p: any) => p.type === 'text');
+          messageText = textPart?.text || '';
+        }
+
         return {
           body: {
             id: request.id,
-            ...(isToolApprovalContinuation
-              ? { messages: request.messages }
-              : { message: lastMessage }),
+            messages: request.messages, // Always send full message history
+            message: messageText, // Backend requires this as string
             selectedChatModel: currentModelIdRef.current,
             selectedVisibilityType: visibilityType,
             ...request.body,

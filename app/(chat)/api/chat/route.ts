@@ -105,8 +105,8 @@ export async function POST(request: Request) {
       );
     }
 
-    // 3. Parse request body untuk mendapatkan chatId jika tersedia
-    let body: string;
+    // 3. Parse request body untuk mendapatkan chatId dan transform ke format backend
+    let transformedBody: string;
     let chatId = 'web-session'; // Default chatId
     
     try {
@@ -117,7 +117,15 @@ export async function POST(request: Request) {
         chatId = json.id;
       }
       
-      body = JSON.stringify(json);
+      // Transform body ke format yang diharapkan backend
+      // Backend expects: { message: string, messages: Array }
+      // Frontend now sends: { id, messages: [...], message: string }
+      const backendPayload = {
+        message: json.message || '', // Message text from frontend
+        messages: json.messages || [], // Full message history
+      };
+      
+      transformedBody = JSON.stringify(backendPayload);
     } catch (error) {
       return new Response(
         JSON.stringify({
@@ -156,7 +164,7 @@ export async function POST(request: Request) {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${backendToken}`,
       },
-      body,
+      body: transformedBody,
     });
 
     // 6. Forward selective response headers dari backend ke client
