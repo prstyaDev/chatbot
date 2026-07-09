@@ -300,11 +300,21 @@ function PureMultimodalInput({
       {messages.length === 0 &&
         attachments.length === 0 &&
         uploadQueue.length === 0 && (
-          <SuggestedActions
-            chatId={chatId}
-            selectedVisibilityType={selectedVisibilityType}
-            sendMessage={sendMessage}
-          />
+          <div className="flex flex-col items-center justify-center gap-6 pb-8">
+            <div className="flex flex-col items-center gap-2">
+              <h1 className="text-center text-5xl font-semibold text-white">
+                What can I help with?
+              </h1>
+              <p className="text-center text-sm text-gray-400">
+                Ask a question, write code, or explore ideas
+              </p>
+            </div>
+            <SuggestedActions
+              chatId={chatId}
+              selectedVisibilityType={selectedVisibilityType}
+              sendMessage={sendMessage}
+            />
+          </div>
         )}
 
       <input
@@ -317,7 +327,7 @@ function PureMultimodalInput({
       />
 
       <PromptInput
-        className="rounded-2xl border border-zinc-800/60 bg-black/40 p-3 shadow-sm transition-all duration-200 focus-within:border-zinc-700/80"
+        className="rounded-2xl border border-zinc-700/40 bg-zinc-900/80 p-3 shadow-sm transition-all duration-200 focus-within:border-zinc-600/60"
         onSubmit={(event) => {
           event.preventDefault();
           if (!input.trim() && attachments.length === 0) {
