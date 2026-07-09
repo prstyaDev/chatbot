@@ -23,7 +23,7 @@ function PureSuggestedActions({ chatId, sendMessage }: SuggestedActionsProps) {
 
   return (
     <div
-      className="grid w-full gap-2 grid-cols-2 md:grid-cols-4"
+      className="flex flex-row overflow-x-auto scrollbar-none gap-2 w-full justify-start md:justify-center"
       data-testid="suggested-actions"
     >
       {suggestedActions.map((suggestedAction, index) => (
@@ -33,9 +33,10 @@ function PureSuggestedActions({ chatId, sendMessage }: SuggestedActionsProps) {
           initial={{ opacity: 0, y: 20 }}
           key={suggestedAction}
           transition={{ delay: 0.05 * index }}
+          className="whitespace-nowrap shrink-0"
         >
           <Suggestion
-            className="h-auto w-full whitespace-normal p-3 text-left"
+            className="text-xs px-3 py-1.5 rounded-full whitespace-nowrap"
             onClick={(suggestion) => {
               window.history.pushState({}, "", `/chat/${chatId}`);
               sendMessage({

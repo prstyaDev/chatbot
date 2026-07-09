@@ -317,7 +317,7 @@ function PureMultimodalInput({
       />
 
       <PromptInput
-        className="rounded-2xl border border-zinc-800 bg-zinc-800/30 p-3 shadow-sm transition-all duration-200 focus-within:border-zinc-700"
+        className="rounded-2xl border border-zinc-800/60 bg-black/40 p-3 shadow-sm transition-all duration-200 focus-within:border-zinc-700/80"
         onSubmit={(event) => {
           event.preventDefault();
           if (!input.trim() && attachments.length === 0) {
